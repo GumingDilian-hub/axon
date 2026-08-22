@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BioAI · 文献题 & 问答</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { background:#202020; color:#e0e0e0; font-family: system-ui, sans-serif; min-height:100vh; display:flex; justify-content:center; padding:20px; }
+        .app { max-width:1100px; width:100%; background:#2a2a2a; border-radius:12px; display:flex; flex-direction:column; height:95vh; overflow:hidden; }
+        .header { padding:12px 24px; border-bottom:1px solid #3a3a3a; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+        .header h1 { font-size:20px; font-weight:400; color:#f0f0f0; }
+        .header-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+        .header-actions select, .header-actions button { background:#1e1e1e; border:1px solid #3a3a3a; color:#ddd; padding:6px 14px; border-radius:6px; font-size:14px; cursor:pointer; }
+        .chat-area { flex:1; overflow-y:auto; padding:20px 24px; display:flex; flex-direction:column; gap:12px; background:#1e1e1e; margin:0 4px; border-radius:8px; }
+        .message { max-width:85%; padding:10px 16px; border-radius:10px; line-height:1.6; font-size:15px; word-wrap:break-word; }
+        .message.user { align-self:flex-end; background:#3a3a3a; border:1px solid #555; }
+        .message.assistant { align-self:flex-start; background:#2a2a2a; border:1px solid #3a3a3a; }
+        .message img { max-width:100%; border-radius:6px; margin:6px 0; border:1px solid #444; }
+        .message .meta { font-size:12px; color:#888; margin-bottom:4px; }
+        .input-area { padding:12px 24px; border-top:1px solid #3a3a3a; display:flex; gap:10px; background:#222; align-items:flex-end; }
+        .input-area textarea { flex:1; background:#1a1a1a; border:1px solid #3a3a3a; border-radius:8px; color:#e0e0e0; padding:10px; resize:none; font-family:inherit; font-size:14px; min-height:46px; max-height:120px; }
+        .input-area textarea:focus { outline:none; border-color:#777; }
+        .input-area .btn-group { display:flex; gap:6px; }
+        .input-area button { background:#3a3a3a; border:1px solid #555; color:#fff; padding:0 16px; border-radius:8px; font-size:14px; cursor:pointer; white-space:nowrap; height:46px; }
+        .input-area button:hover { background:#4a4a4a; }
+        .input-area button:disabled { opacity:0.4; cursor:not-allowed; }
+        .hidden { display:none !important; }
+        .modal { position:fixed; inset:0; background:rgba(0,0,0,0.8); display:flex; justify-content:center; align-items:center; z-index:999; }
+        .modal-content { background:#2a2a2a; padding:30px; border-radius:12px; max-width:600px; width:90%; border:1px solid #444; }
+        .modal-content h3 { font-weight:400; margin-bottom:16px; }
+        .modal-content label { display:block; margin:12px 0 4px; color:#bbb; font-size:14px; }
+        .modal-content input, .modal-content select { width:100%; padding:8px 12px; background:#1a1a1a; border:1px solid #3a3a3a; border-radius:6px; color:#e0e0e0; font-size:14px; }
+        .modal-content .actions { display:flex; gap:12px; justify-content:flex-end; margin-top:20px; }
+        .modal-content .actions button { padding:6px 20px; border-radius:6px; border:1px solid #555; background:#3a3a3a; color:#eee; cursor:pointer; }
+        .modal-content .file-input-wrapper { display:flex; gap:10px; flex-wrap:wrap; margin-top:4px; }
+        .modal-content .file-input-wrapper label { background:#1e1e1e; border:1px solid #3a3a3a; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:13px; color:#ccc; margin:0; }
+        .modal-content .file-input-wrapper input[type="file"] { display:none; }
+        .spinner { border:2px solid #333; border-top:2px solid #aaa; border-radius:50%; width:20px; height:20px; animation:spin 0.8s linear infinite; display:inline-block; vertical-align:middle; margin-right:8px; }
+        @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+        .footer-links { display:flex; justify-content:space-between; padding:8px 24px; border-top:1px solid #333; font-size:13px; color:#666; }
+        .footer-links a { color:#999; text-decoration:none; margin-right:16px; }
+        .footer-links a:hover { color:#ccc; }
+        ::-webkit-scrollbar { width:6px; }
+        ::-webkit-scrollbar-track { background:#1a1a1a; }
+        ::-webkit-scrollbar-thumb { background:#444; border-radius:4px; }
+    </style>
+</head>
+<body>
+<div class="app" id="app">
+    <div class="header">
+        <h1>BioAI · 文献题 & 问答</h1>
+        <div class="header-actions">
+            <select id="modelSelect">
+                <optgroup label="【视觉模型】用于出题">
+                    <option value="meta/llama-3.2-90b-vision-instruct">Llama 3.2 90B Vision</option>
+                    <option value="qwen/qwen3.5-122b-a10b">Qwen 3.5 122B (多模态)</option>
+                    <option value="nvidia/llama-3.1-nemotron-nano-vi-8b-v1">Nemotron 8B Vision</option>
+                </optgroup>
+                <optgroup label="【文本模型】用于聊天">
+                    <option value="nvidia/nemotron-3-super-120b-a12b" selected>Nemotron 3 Super 120B (默认)</option>
+                    <option value="nvidia/nemotron-3-ultra-550b-a55b">Nemotron 3 Ultra 550B</option>
+                    <option value="meta/llama-3.1-405b-instruct">Llama 3.1 405B</option>
+                    <option value="meta/llama-3.1-70b-instruct">Llama 3.1 70B</option>
+                </optgroup>
+            </select>
+            <button id="settingsBtn">设置</button>
+        </div>
+    </div>
+
+    <div class="chat-area" id="chatArea">
+        <div class="message assistant">
+            <div class="meta">系统</div>
+            欢迎！你可以直接聊天（使用当前模型），或点击「出题」上传PDF生成实验题。<br>
+            点击「上传」可暂存文件（PDF/图片），方便随时出题。
+        </div>
+    </div>
+
+    <div class="input-area">
+        <textarea id="chatInput" placeholder="输入消息..." rows="2"></textarea>
+        <div class="btn-group">
+            <button id="uploadBtn">上传</button>
+            <button id="startExamBtn">出题</button>
+            <button id="sendBtn">发送</button>
+        </div>
+    </div>
+
+    <div class="footer-links">
+        <div>
+            <a href="https://pubmed.ncbi.nlm.nih.gov/" target="_blank">PubMed</a>
+            <a href="#" id="scihubLink" target="_blank">Sci-Hub</a>
+            <span id="scihubStatus" style="color:#555;font-size:12px;margin-left:8px;"></span>
+        </div>
+        <div style="color:#555;">状态: <span id="globalStatus">就绪</span></div>
+    </div>
+
+    <!-- 设置弹窗 -->
+    <div class="modal hidden" id="settingsModal">
+        <div class="modal-content">
+            <h3>账户与API</h3>
+            <label>邮箱</label>
+            <input type="email" id="loginEmail" placeholder="用于登录">
+            <label>密码</label>
+            <input type="password" id="loginPassword" placeholder="密码">
+            <div style="display:flex;gap:10px;margin:10px 0;">
+                <button id="loginBtn" style="background:#3a3a3a;border:1px solid #555;padding:6px 20px;border-radius:6px;color:#eee;cursor:pointer;">登录</button>
+                <button id="registerBtn" style="background:#2a2a2a;border:1px solid #444;padding:6px 20px;border-radius:6px;color:#aaa;cursor:pointer;">注册</button>
+            </div>
+            <label>NVIDIA API Key (免排队)</label>
+            <input type="text" id="userApiKeyInput" placeholder="nvapi-...">
+            <div class="actions">
+                <button id="settingsClose">关闭</button>
+                <button id="settingsSave">保存设置</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 出题弹窗 -->
+    <div class="modal hidden" id="examModal">
+        <div class="modal-content">
+            <h3>📄 生成实验题</h3>
+            <label>PDF 论文（必填）</label>
+            <div class="file-input-wrapper">
+                <label>选择 PDF 文件 <input type="file" id="examPdfInput" accept=".pdf"></label>
+                <span id="examPdfName" style="color:#aaa;font-size:13px;">未选择</span>
+            </div>
+            <label>范例图片（可选，用于风格参考）</label>
+            <div class="file-input-wrapper">
+                <label>选择图片 <input type="file" id="examExampleInput" accept=".jpg,.jpeg,.png" multiple></label>
+                <span id="examExampleCount" style="color:#aaa;font-size:13px;">0 张</span>
+            </div>
+            <label>你的 NVIDIA API Key（可选，免排队）</label>
+            <input type="text" id="examApiKey" placeholder="nvapi-...">
+            <label>模型选择（自动切换至视觉模型）</label>
+            <select id="examModelSelect">
+                <option value="meta/llama-3.2-90b-vision-instruct" selected>Llama 3.2 90B Vision</option>
+                <option value="qwen/qwen3.5-122b-a10b">Qwen 3.5 122B</option>
+                <option value="nvidia/llama-3.1-nemotron-nano-vi-8b-v1">Nemotron 8B Vision</option>
+            </select>
+            <div class="actions">
+                <button id="examCancel">取消</button>
+                <button id="examConfirm">开始出题</button>
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="hiddenFileInput" accept=".pdf,.jpg,.jpeg,.png" style="display:none;" multiple>
+</div>
+
+<script>
+    (function() {
+        // ---------- 状态 ----------
+        const state = {
+            model: document.getElementById('modelSelect').value,
+            apiKey: localStorage.getItem('userApiKey') || '',
+            token: localStorage.getItem('token') || null,
+            userId: null,
+            taskId: null,
+            isProcessing: false,
+            messages: [], // 聊天历史 [{role, content}]
+            uploadedFiles: [], // 暂存文件
+        };
+
+        // ---------- DOM ----------
+        const chatArea = document.getElementById('chatArea');
+        const chatInput = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const startExamBtn = document.getElementById('startExamBtn');
+        const modelSelect = document.getElementById('modelSelect');
+        const globalStatus = document.getElementById('globalStatus');
+        const scihubLink = document.getElementById('scihubLink');
+        const scihubStatus = document.getElementById('scihubStatus');
+
+        // 弹窗
+        const settingsModal = document.getElementById('settingsModal');
+        const settingsClose = document.getElementById('settingsClose');
+        const settingsSave = document.getElementById('settingsSave');
+        const userApiKeyInput = document.getElementById('userApiKeyInput');
+        const loginEmail = document.getElementById('loginEmail');
+        const loginPassword = document.getElementById('loginPassword');
+        const loginBtn = document.getElementById('loginBtn');
+        const registerBtn = document.getElementById('registerBtn');
+        const settingsBtn = document.getElementById('settingsBtn');
+
+        const examModal = document.getElementById('examModal');
+        const examPdfInput = document.getElementById('examPdfInput');
+        const examExampleInput = document.getElementById('examExampleInput');
+        const examApiKey = document.getElementById('examApiKey');
+        const examModelSelect = document.getElementById('examModelSelect');
+        const examCancel = document.getElementById('examCancel');
+        const examConfirm = document.getElementById('examConfirm');
+        const examPdfName = document.getElementById('examPdfName');
+        const examExampleCount = document.getElementById('examExampleCount');
+
+        const hiddenFileInput = document.getElementById('hiddenFileInput');
+
+        const API_BASE = window.location.origin;
+
+        // ---------- 初始化 ----------
+        if (state.apiKey) userApiKeyInput.value = state.apiKey;
+        modelSelect.addEventListener('change', () => state.model = modelSelect.value);
+
+        // ---------- 辅助函数 ----------
+        function addMessage(role, content, imageUrl = null) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            const meta = document.createElement('div');
+            meta.className = 'meta';
+            meta.textContent = role === 'user' ? '你' : 'AI';
+            div.appendChild(meta);
+            if (imageUrl) {
+                const img = document.createElement('img');
+                img.src = imageUrl;
+                div.appendChild(img);
+            }
+            if (content) {
+                const p = document.createElement('div');
+                p.textContent = content;
+                div.appendChild(p);
+            }
+            chatArea.appendChild(div);
+            chatArea.scrollTop = chatArea.scrollHeight;
+            return div;
+        }
+
+        function addSystemMessage(text) {
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+            div.style.borderLeft = '3px solid #666';
+            div.textContent = text;
+            chatArea.appendChild(div);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        function readFileAsDataURL(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function handlePdfUpload(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            const total = pdf.numPages;
+            const pagesToConvert = Math.min(total, 5);
+            const images = [];
+            for (let i = 1; i <= pagesToConvert; i++) {
+                const page = await pdf.getPage(i);
+                const viewport = page.getViewport({ scale: 1.8 });
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                images.push(canvas.toDataURL('image/jpeg', 0.8));
+            }
+            return images;
+        }
+
+        // ---------- 纯文本聊天（支持流式） ----------
+        async function sendTextMessage(text) {
+            if (!text.trim()) return;
+            addMessage('user', text);
+            state.messages.push({ role: 'user', content: text });
+
+            const messages = state.messages.map(m => ({ role: m.role, content: m.content }));
+            const assistantMsg = addMessage('assistant', '⏳ 思考中...');
+            const p = assistantMsg.querySelector('div:last-child');
+            p.textContent = '';
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/chat/text`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': state.token ? `Bearer ${state.token}` : ''
+                    },
+                    body: JSON.stringify({
+                        messages,
+                        model: state.model,
+                        apiKey: state.apiKey || undefined,
+                    })
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || '请求失败');
+                }
+
+                // 流式读取
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let fullText = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    // 假设 NIM 流式返回 SSE 格式，解析 data: {...}
+                    const lines = chunk.split('\n').filter(line => line.startsWith('data: '));
+                    for (const line of lines) {
+                        const jsonStr = line.slice(6).trim();
+                        if (jsonStr === '[DONE]') continue;
+                        try {
+                            const data = JSON.parse(jsonStr);
+                            const content = data.choices?.[0]?.delta?.content || '';
+                            fullText += content;
+                            p.textContent = fullText;
+                            chatArea.scrollTop = chatArea.scrollHeight;
+                        } catch {}
+                    }
+                }
+                state.messages.push({ role: 'assistant', content: fullText });
+            } catch (err) {
+                p.textContent = `❌ ${err.message}`;
+                p.style.color = '#8b3a3a';
+            }
+        }
+
+        // ---------- 出题提交 ----------
+        async function startExam(pdfFiles, exampleFiles, apiKey, model) {
+            if (state.isProcessing) return;
+            const pdfImages = [];
+            for (const file of pdfFiles) {
+                if (file.type === 'application/pdf') {
+                    const imgs = await handlePdfUpload(file);
+                    pdfImages.push(...imgs);
+                } else if (file.type.startsWith('image/')) {
+                    const dataUrl = await readFileAsDataURL(file);
+                    pdfImages.push(dataUrl);
+                }
+            }
+            if (pdfImages.length === 0) {
+                alert('请上传有效的 PDF 或图片文件');
+                return;
+            }
+
+            const exampleImages = [];
+            for (const file of exampleFiles) {
+                if (file.type.startsWith('image/')) {
+                    const dataUrl = await readFileAsDataURL(file);
+                    exampleImages.push(dataUrl);
+                }
+            }
+
+            const context = state.messages.map(m => ({ role: m.role, content: m.content }));
+
+            state.isProcessing = true;
+            globalStatus.textContent = '提交中...';
+            const loadingMsg = addMessage('assistant', '⏳ 提交出题任务...');
+
+            const formData = new FormData();
+            formData.append('pdfImages', JSON.stringify(pdfImages));
+            formData.append('exampleImages', JSON.stringify(exampleImages));
+            formData.append('model', model);
+            formData.append('userApiKey', apiKey || state.apiKey || '');
+            formData.append('context', JSON.stringify(context));
+            if (state.userId) formData.append('userId', state.userId);
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/chat/submit`, {
+                    method: 'POST',
+                    headers: { 'Authorization': state.token ? `Bearer ${state.token}` : '' },
+                    body: formData,
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.error || '提交失败');
+                state.taskId = data.taskId;
+                loadingMsg.textContent = '⏳ 任务已排队，等待处理...';
+                listenToStream(data.taskId, loadingMsg);
+            } catch (err) {
+                loadingMsg.textContent = `❌ 错误: ${err.message}`;
+                state.isProcessing = false;
+                globalStatus.textContent = '就绪';
+            }
+        }
+
+        // ---------- SSE 监听 ----------
+        function listenToStream(taskId, loadingElem) {
+            const eventSource = new EventSource(`${API_BASE}/api/chat/stream?taskId=${taskId}`);
+            let finished = false;
+
+            eventSource.addEventListener('progress', (e) => {
+                const data = JSON.parse(e.data);
+                const statusMap = {
+                    'analyzing': '🔍 分析图表结构...',
+                    'generating': '🧠 AI 命题中...',
+                    'rendering': '🖼️ 生成试卷截图...'
+                };
+                loadingElem.textContent = statusMap[data.status] || `⏳ ${data.status}...`;
+                globalStatus.textContent = data.status;
+            });
+
+            eventSource.addEventListener('result', (e) => {
+                const data = JSON.parse(e.data);
+                finished = true;
+                eventSource.close();
+                loadingElem.remove();
+                if (data.image_url) {
+                    addMessage('assistant', '✅ 题目已生成：', data.image_url);
+                }
+                if (data.text) {
+                    const msg = addMessage('assistant', data.text);
+                    msg.style.whiteSpace = 'pre-wrap';
+                    state.messages.push({ role: 'assistant', content: data.text });
+                }
+                state.isProcessing = false;
+                globalStatus.textContent = '就绪';
+                state.taskId = null;
+            });
+
+            eventSource.addEventListener('error', (e) => {
+                if (!finished) {
+                    eventSource.close();
+                    loadingElem.textContent = '❌ 连接中断，尝试轮询...';
+                    pollStatus(taskId, loadingElem);
+                }
+            });
+
+            eventSource.addEventListener('cancelled', () => {
+                finished = true;
+                eventSource.close();
+                loadingElem.textContent = '⏹️ 任务已取消';
+                state.isProcessing = false;
+                globalStatus.textContent = '就绪';
+                state.taskId = null;
+            });
+
+            setTimeout(() => {
+                if (!finished) {
+                    eventSource.close();
+                    if (!loadingElem.textContent.includes('错误')) {
+                        loadingElem.textContent = '⏳ 处理超时，轮询中...';
+                        pollStatus(taskId, loadingElem);
+                    }
+                }
+            }, 180000);
+        }
+
+        async function pollStatus(taskId, loadingElem) {
+            let attempts = 0;
+            const interval = setInterval(async () => {
+                attempts++;
+                try {
+                    const resp = await fetch(`${API_BASE}/api/chat/status?taskId=${taskId}`);
+                    const data = await resp.json();
+                    if (data.status === 'done') {
+                        clearInterval(interval);
+                        loadingElem.remove();
+                        if (data.result_image_url) addMessage('assistant', '✅ 题目已生成：', data.result_image_url);
+                        if (data.result_text) {
+                            const msg = addMessage('assistant', data.result_text);
+                            msg.style.whiteSpace = 'pre-wrap';
+                            state.messages.push({ role: 'assistant', content: data.result_text });
+                        }
+                        state.isProcessing = false;
+                        globalStatus.textContent = '就绪';
+                        state.taskId = null;
+                    } else if (data.status === 'error') {
+                        clearInterval(interval);
+                        loadingElem.textContent = `❌ 错误: ${data.error || '未知'}`;
+                        state.isProcessing = false;
+                        globalStatus.textContent = '错误';
+                        state.taskId = null;
+                    } else if (data.status === 'cancelled') {
+                        clearInterval(interval);
+                        loadingElem.textContent = '⏹️ 任务已取消';
+                        state.isProcessing = false;
+                        globalStatus.textContent = '就绪';
+                        state.taskId = null;
+                    } else {
+                        loadingElem.textContent = `⏳ 状态: ${data.status}`;
+                    }
+                } catch (e) {}
+                if (attempts > 120) {
+                    clearInterval(interval);
+                    loadingElem.textContent = '⏰ 处理超时，请重试';
+                    state.isProcessing = false;
+                    globalStatus.textContent = '超时';
+                    state.taskId = null;
+                }
+            }, 3000);
+        }
+
+        // ---------- 取消任务 ----------
+        async function cancelTask() {
+            if (!state.taskId) return;
+            if (!confirm('确定要取消当前任务吗？')) return;
+            try {
+                await fetch(`${API_BASE}/api/chat/cancel?taskId=${state.taskId}`);
+            } catch {}
+        }
+
+        // ---------- 事件绑定 ----------
+        sendBtn.addEventListener('click', () => {
+            const text = chatInput.value.trim();
+            if (!text) return;
+            if (state.isProcessing) {
+                alert('正在处理出题，请等待完成或取消');
+                return;
+            }
+            sendTextMessage(text);
+            chatInput.value = '';
+        });
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendBtn.click();
+            }
+        });
+
+        uploadBtn.addEventListener('click', () => hiddenFileInput.click());
+        hiddenFileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                state.uploadedFiles = Array.from(e.target.files);
+                addSystemMessage(`📎 已暂存 ${state.uploadedFiles.length} 个文件，点击「出题」使用`);
+                hiddenFileInput.value = '';
+            }
+        });
+
+        startExamBtn.addEventListener('click', () => {
+            if (state.isProcessing) return;
+            examApiKey.value = state.apiKey || '';
+            examModelSelect.value = 'meta/llama-3.2-90b-vision-instruct';
+            examModal.classList.remove('hidden');
+        });
+
+        examCancel.addEventListener('click', () => {
+            examModal.classList.add('hidden');
+            examPdfInput.value = '';
+            examExampleInput.value = '';
+            examPdfName.textContent = '未选择';
+            examExampleCount.textContent = '0 张';
+        });
+
+        examConfirm.addEventListener('click', async () => {
+            // 优先使用弹窗内选择的文件，否则使用暂存文件
+            let pdfFiles = examPdfInput.files.length > 0
+                ? Array.from(examPdfInput.files)
+                : state.uploadedFiles.filter(f => f.type === 'application/pdf');
+            let exampleFiles = examExampleInput.files.length > 0
+                ? Array.from(examExampleInput.files)
+                : state.uploadedFiles.filter(f => f.type.startsWith('image/'));
+
+            if (pdfFiles.length === 0) {
+                alert('请至少选择一个 PDF 文件，或先点击「上传」暂存文件');
+                return;
+            }
+
+            const apiKey = examApiKey.value.trim();
+            const model = examModelSelect.value;
+
+            examModal.classList.add('hidden');
+            await startExam(pdfFiles, exampleFiles, apiKey, model);
+
+            // 清理暂存
+            state.uploadedFiles = [];
+            examPdfInput.value = '';
+            examExampleInput.value = '';
+            examPdfName.textContent = '未选择';
+            examExampleCount.textContent = '0 张';
+        });
+
+        examPdfInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) examPdfName.textContent = e.target.files[0].name;
+            else examPdfName.textContent = '未选择';
+        });
+        examExampleInput.addEventListener('change', (e) => {
+            examExampleCount.textContent = `${e.target.files.length} 张`;
+        });
+
+        // 设置弹窗
+        settingsBtn.addEventListener('click', () => {
+            settingsModal.classList.remove('hidden');
+            userApiKeyInput.value = state.apiKey || '';
+        });
+        settingsClose.addEventListener('click', () => settingsModal.classList.add('hidden'));
+        settingsSave.addEventListener('click', () => {
+            const key = userApiKeyInput.value.trim();
+            if (key) {
+                state.apiKey = key;
+                localStorage.setItem('userApiKey', key);
+            } else {
+                state.apiKey = '';
+                localStorage.removeItem('userApiKey');
+            }
+            settingsModal.classList.add('hidden');
+            addSystemMessage('✅ 设置已保存');
+        });
+
+        // 登录/注册
+        loginBtn.addEventListener('click', async () => {
+            const email = loginEmail.value, password = loginPassword.value;
+            if (!email || !password) return alert('填写邮箱和密码');
+            try {
+                const resp = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    state.token = data.token;
+                    state.userId = data.userId;
+                    if (data.apiKey) {
+                        state.apiKey = data.apiKey;
+                        localStorage.setItem('userApiKey', data.apiKey);
+                        userApiKeyInput.value = data.apiKey;
+                    }
+                    localStorage.setItem('token', data.token);
+                    addSystemMessage(`✅ 登录成功，欢迎 ${email}`);
+                } else {
+                    alert(data.error);
+                }
+            } catch (err) {
+                alert('网络错误');
+            }
+        });
+
+        registerBtn.addEventListener('click', async () => {
+            const email = loginEmail.value, password = loginPassword.value;
+            if (!email || !password) return alert('填写邮箱和密码');
+            try {
+                const resp = await fetch(`${API_BASE}/api/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await resp.json();
+                if (resp.ok) alert('注册成功，请登录');
+                else alert(data.error);
+            } catch (err) {
+                alert('网络错误');
+            }
+        });
+
+        // Sci-Hub
+        async function updateSciHub() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/scihub/mirror`);
+                const data = await resp.json();
+                scihubLink.href = data.best || 'https://sci-hub.se';
+                scihubStatus.textContent = '已选镜像';
+            } catch {
+                scihubLink.href = 'https://sci-hub.se';
+                scihubStatus.textContent = '默认';
+            }
+        }
+        updateSciHub();
+
+        console.log('BioAI 前端已加载');
+    })();
+</script>
+</body>
+</html>
