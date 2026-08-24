@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Markdown 章节转换器</title>
+    <title>Markdown 章节转换器（带删除）</title>
     <style>
         * {
             box-sizing: border-box;
@@ -151,16 +151,23 @@
             justify-content: space-between;
             align-items: center;
         }
-        .chapter-card .filename .copy-chapter-btn {
+        .chapter-card .filename .actions {
+            display: flex;
+            gap: 8px;
+        }
+        .chapter-card .filename .actions button {
             background: transparent;
             border: none;
             color: #aaa;
             cursor: pointer;
             font-size: 0.75rem;
-            padding: 0 6px;
+            padding: 0 4px;
         }
-        .chapter-card .filename .copy-chapter-btn:hover {
+        .chapter-card .filename .actions button:hover {
             color: #fff;
+        }
+        .chapter-card .filename .actions .del-btn:hover {
+            color: #e74c3c;
         }
         .chapter-card pre {
             margin: 0;
@@ -183,12 +190,6 @@
             font-size: 0.8rem;
             margin-left: 6px;
         }
-        .flex-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px 16px;
-            align-items: center;
-        }
         .json-header {
             display: flex;
             justify-content: space-between;
@@ -196,11 +197,16 @@
             flex-wrap: wrap;
             gap: 8px;
         }
+        .empty-hint {
+            color: #888;
+            padding: 20px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>📖 Markdown → 章节拆分 + toc.json 条目</h1>
+    <h1>📖 Markdown → 章节拆分 + toc.json 条目（带删除）</h1>
     <div class="row">
         <label>分割依据：
             <select id="splitLevel">
@@ -227,7 +233,7 @@
         </div>
         <div class="json-output" id="jsonOutput"></div>
 
-        <h2 style="margin-top:24px;">📁 各章节文件（点击复制按钮可复制内容）</h2>
+        <h2 style="margin-top:24px;">📁 各章节文件（点击删除可移除，编号自动补齐）</h2>
         <div id="chaptersContainer" class="chapters-grid"></div>
         <div class="status" id="statusMsg"></div>
     </div>
@@ -247,6 +253,11 @@
         const chaptersContainer = document.getElementById('chaptersContainer');
         const statusMsg = document.getElementById('statusMsg');
         const copyJsonBtn = document.getElementById('copyJsonBtn');
+
+        // 全局存储当前章节数据
+        let currentChapters = [];
+        let currentFolder = '001';
+        let currentStartNum = 1;
 
         function pad3(num) {
             return String(num).padStart(3, '0');
@@ -271,40 +282,16 @@
             return lines.slice(startIdx, endIdx).join('\n');
         }
 
-        function generate() {
-            const md = inputMd.value;
-            if (!md.trim()) {
-                alert('请先粘贴 Markdown 内容！');
-                return;
-            }
-
-            const split = parseInt(splitLevel.value, 10);
-            const folder = folderStart.value.trim().padStart(3, '0');
-            if (!/^\d{3}$/.test(folder)) {
-                alert('起始文件夹必须为三位数字，如 001');
-                return;
-            }
-            let fileNum = parseInt(fileStart.value.trim(), 10);
-            if (isNaN(fileNum) || fileNum < 1 || fileNum > 999) {
-                alert('起始文件编号必须为 1~999 的数字');
-                return;
-            }
-
+        // 生成原始章节数据（不依赖编号）
+        function generateRawChapters(md, split) {
             const { headings, lines } = parseHeadings(md);
-
             const splitIndices = [];
             headings.forEach((h, idx) => {
-                if (h.level === split) {
-                    splitIndices.push(idx);
-                }
+                if (h.level === split) splitIndices.push(idx);
             });
+            if (splitIndices.length === 0) return [];
 
-            if (splitIndices.length === 0) {
-                alert(`未找到任何 H${split} 标题，请检查 Markdown 或更换分割级别。`);
-                return;
-            }
-
-            const chapters = [];
+            const rawChapters = [];
             for (let i = 0; i < splitIndices.length; i++) {
                 const hIdx = splitIndices[i];
                 const h = headings[hIdx];
@@ -323,56 +310,66 @@
                         subTitles.push(hj.title);
                     }
                 }
-
                 let title = h.title;
                 if (subTitles.length > 0) {
                     title += '，' + subTitles.join('，');
                 }
 
-                const id = pad3(fileNum);
-                const path = folder + '/' + id + '.md';
-                fileNum++;
-
-                chapters.push({
-                    id,
-                    title,
-                    path,
-                    content,
+                rawChapters.push({
+                    title: title,
+                    content: content,
                     rawHeading: h.raw
                 });
             }
+            return rawChapters;
+        }
 
-            // 生成对象列表（不带外层 [ ]）
-            const jsonItems = chapters.map(ch => {
-                return `  { "id": "${ch.id}", "title": "${ch.title}", "path": "${ch.path}" }`;
+        // 渲染输出（基于 currentChapters）
+        function renderOutput() {
+            if (currentChapters.length === 0) {
+                jsonOutput.textContent = '（无章节）';
+                chaptersContainer.innerHTML = '<div class="empty-hint">暂无章节，请重新生成。</div>';
+                statusMsg.textContent = '⚠️ 无章节数据';
+                return;
+            }
+
+            // 生成 JSON 条目（按当前顺序，编号从 currentStartNum 递增）
+            const jsonItems = currentChapters.map((ch, idx) => {
+                const id = pad3(currentStartNum + idx);
+                const path = currentFolder + '/' + id + '.md';
+                return `  { "id": "${id}", "title": "${ch.title}", "path": "${path}" }`;
             });
-            // 用逗号加换行连接
-            const jsonStr = jsonItems.join(',\n');
+            jsonOutput.textContent = jsonItems.join(',\n');
 
-            jsonOutput.textContent = jsonStr;
-
-            // 显示各章节代码块
+            // 渲染卡片
             chaptersContainer.innerHTML = '';
-            chapters.forEach(ch => {
+            currentChapters.forEach((ch, idx) => {
+                const id = pad3(currentStartNum + idx);
+                const path = currentFolder + '/' + id + '.md';
+
                 const card = document.createElement('div');
                 card.className = 'chapter-card';
 
                 const filenameDiv = document.createElement('div');
                 filenameDiv.className = 'filename';
                 const nameSpan = document.createElement('span');
-                nameSpan.textContent = ch.path;
+                nameSpan.textContent = path;
+
+                const actions = document.createElement('div');
+                actions.className = 'actions';
+
                 const copyBtn = document.createElement('button');
-                copyBtn.className = 'copy-chapter-btn';
                 copyBtn.textContent = '📋 复制内容';
                 copyBtn.addEventListener('click', function(e) {
                     e.stopPropagation();
-                    navigator.clipboard.writeText(ch.content).then(() => {
+                    const text = ch.content;
+                    navigator.clipboard.writeText(text).then(() => {
                         const orig = this.textContent;
                         this.textContent = '✅ 已复制';
                         setTimeout(() => { this.textContent = orig; }, 1500);
                     }).catch(() => {
                         const ta = document.createElement('textarea');
-                        ta.value = ch.content;
+                        ta.value = text;
                         document.body.appendChild(ta);
                         ta.select();
                         document.execCommand('copy');
@@ -382,8 +379,23 @@
                         setTimeout(() => { this.textContent = orig; }, 1500);
                     });
                 });
+
+                const delBtn = document.createElement('button');
+                delBtn.textContent = '🗑️ 删除';
+                delBtn.className = 'del-btn';
+                delBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    if (confirm(`确定要删除章节 "${ch.title}" 吗？\n后续编号将自动补齐。`)) {
+                        currentChapters.splice(idx, 1);
+                        renderOutput();
+                        statusMsg.textContent = `已删除，剩余 ${currentChapters.length} 个章节。`;
+                    }
+                });
+
+                actions.appendChild(copyBtn);
+                actions.appendChild(delBtn);
                 filenameDiv.appendChild(nameSpan);
-                filenameDiv.appendChild(copyBtn);
+                filenameDiv.appendChild(actions);
                 card.appendChild(filenameDiv);
 
                 const pre = document.createElement('pre');
@@ -393,14 +405,48 @@
                 chaptersContainer.appendChild(card);
             });
 
-            outputArea.style.display = 'block';
-            statusMsg.textContent = `✅ 成功生成 ${chapters.length} 个章节，文件夹：${folder}，文件编号从 ${pad3(parseInt(fileStart.value.trim()))} 开始递增。`;
+            statusMsg.textContent = `✅ 当前 ${currentChapters.length} 个章节，文件夹：${currentFolder}，编号从 ${pad3(currentStartNum)} 开始连续递增。`;
         }
 
-        // 复制 JSON 条目列表（纯对象，不带括号）
+        // 生成主函数
+        function generate() {
+            const md = inputMd.value;
+            if (!md.trim()) {
+                alert('请先粘贴 Markdown 内容！');
+                return;
+            }
+
+            const split = parseInt(splitLevel.value, 10);
+            const folder = folderStart.value.trim().padStart(3, '0');
+            if (!/^\d{3}$/.test(folder)) {
+                alert('起始文件夹必须为三位数字，如 001');
+                return;
+            }
+            let startNum = parseInt(fileStart.value.trim(), 10);
+            if (isNaN(startNum) || startNum < 1 || startNum > 999) {
+                alert('起始文件编号必须为 1~999 的数字');
+                return;
+            }
+
+            const raw = generateRawChapters(md, split);
+            if (raw.length === 0) {
+                alert(`未找到任何 H${split} 标题，请检查 Markdown 或更换分割级别。`);
+                return;
+            }
+
+            // 保存全局状态
+            currentChapters = raw;
+            currentFolder = folder;
+            currentStartNum = startNum;
+
+            outputArea.style.display = 'block';
+            renderOutput();
+        }
+
+        // 复制 JSON 条目（纯对象）
         copyJsonBtn.addEventListener('click', function() {
             const text = jsonOutput.textContent;
-            if (!text) return;
+            if (!text || text === '（无章节）') return;
             navigator.clipboard.writeText(text).then(() => {
                 const orig = this.textContent;
                 this.textContent = '✅ 已复制';
@@ -427,7 +473,7 @@
             }
         });
 
-        console.log('Markdown 转换器已加载。');
+        console.log('Markdown 转换器（带删除）已加载。');
     })();
 </script>
 </body>
